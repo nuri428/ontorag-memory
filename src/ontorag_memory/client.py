@@ -11,6 +11,7 @@ identity + registry + lifecycle 을 하나로 묶어 쉽게 사용.
 
 from __future__ import annotations
 
+import itertools
 import os
 from typing import Any
 
@@ -89,18 +90,23 @@ class MemoryClient:
 
     async def remember_many(
         self,
-        triples: list[tuple[str, str, str]],
+        triples: list[tuple[str, str, str] | tuple[str, str, str, bool]],
         *,
         ttl_months: int | None = None,
     ) -> int:
-        """여러 (subject, predicate, object) 튜플을 배치 저장.
+        """여러 (subject, predicate, object[, object_is_uri]) 튜플을 배치 저장.
 
-        object가 레지스트리에 있으면 URI로, 없으면 리터럴로 자동 판단.
+        4-튜플: object_is_uri를 명시적으로 지정.
+        3-튜플: object가 레지스트리에 있거나 urn:/http로 시작하면 URI, 아니면 리터럴.
         """
         resolved: list[tuple[str, str, str, bool]] = []
-        for s_text, p, o_text in triples:
+        for item in triples:
+            if len(item) == 4:
+                s_text, p, o_text, is_uri = item  # type: ignore[misc]
+            else:
+                s_text, p, o_text = item  # type: ignore[misc]
+                is_uri = o_text in self.registry or o_text.startswith(("urn:", "http"))
             s = self._resolve(s_text)
-            is_uri = o_text in self.registry or o_text.startswith("urn:")
             o = self._resolve(o_text) if is_uri else o_text
             resolved.append((s, p, o, is_uri))
         return await self._lc.assert_memories(resolved, ttl_months=ttl_months)
@@ -180,10 +186,10 @@ SELECT ?p ?o WHERE {{
             pattern_str = "\n    ".join(
                 f"{nodes[i]} {preds[i]} {nodes[i+1]} ." for i in range(depth)
             )
-            select_vars = " ".join(
+            select_vars = " ".join(itertools.chain.from_iterable(
                 [f"?rel{i}"] + ([f"?mid{i}"] if i < depth - 1 else [])
                 for i in range(depth)
-            )
+            ))
             q = f"""
 SELECT {select_vars} WHERE {{
   GRAPH <{graph}> {{
