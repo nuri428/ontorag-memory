@@ -50,7 +50,9 @@ packages = ["src/ontorag_memory"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["integration: requires live Fuseki"]
+markers = [
+    "integration: requires live Fuseki (localhost:3030) and ontorag HTTP MCP (localhost:8000); deselect with -m 'not integration'",
+]
 
 [tool.ruff]
 line-length = 100
