@@ -218,6 +218,42 @@ independent of ontorag-flow. It works with or without the Kinetic layer.
 
 ---
 
+## Contributing
+
+```bash
+# Install dev dependencies
+uv sync --extra dev
+
+# Unit tests only — no live backend required
+uv run pytest tests/ -m "not integration"
+
+# Integration tests — requires live backends
+#   Fuseki:   docker compose up -d   (inside the ontorag repo)
+#   ontorag:  ontorag serve          (inside the ontorag repo)
+uv run pytest tests/ -m integration
+```
+
+### Integration test mark
+
+Tests marked `integration` require live backends and are excluded by default:
+
+| Mark target | Backend required |
+|---|---|
+| `assert_triple` / `retract_triple` round-trip | Fuseki on `:3030` |
+| `MemoryClient.remember` / `recall` / `find_path` | Fuseki on `:3030` |
+| `MemoryLifecycle.dump` (full graph export) | Fuseki on `:3030` |
+| ontorag HTTP MCP tools | ontorag API on `:8000` |
+
+```bash
+# CI default — unit tests only
+uv run pytest -m "not integration"
+
+# Full suite with live Fuseki
+FUSEKI_URL=http://localhost:3030 uv run pytest -m integration
+```
+
+---
+
 ## Related
 
 - [ontorag](https://github.com/nuri428/ontorag) — Ontology-aware RAG framework (Semantic + Dynamic layer)

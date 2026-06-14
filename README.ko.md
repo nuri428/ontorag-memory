@@ -216,6 +216,42 @@ ontorag-flow와는 독립적입니다. Kinetic 레이어 없이도 사용 가능
 
 ---
 
+## 기여하기
+
+```bash
+# dev 의존성 설치
+uv sync --extra dev
+
+# 유닛 테스트만 — 라이브 백엔드 불필요
+uv run pytest tests/ -m "not integration"
+
+# Integration 테스트 — 라이브 백엔드 필요
+#   Fuseki:   docker compose up -d   (ontorag 레포 안에서)
+#   ontorag:  ontorag serve          (ontorag 레포 안에서)
+uv run pytest tests/ -m integration
+```
+
+### Integration 테스트 마크
+
+`integration` 마크가 붙은 테스트는 라이브 백엔드가 필요하며 기본 실행에서 제외됩니다:
+
+| 마크 대상 | 필요한 백엔드 |
+|---|---|
+| `assert_triple` / `retract_triple` 라운드트립 | Fuseki on `:3030` |
+| `MemoryClient.remember` / `recall` / `find_path` | Fuseki on `:3030` |
+| `MemoryLifecycle.dump` (전체 그래프 내보내기) | Fuseki on `:3030` |
+| ontorag HTTP MCP 툴 | ontorag API on `:8000` |
+
+```bash
+# CI 기본값 — 유닛 테스트만
+uv run pytest -m "not integration"
+
+# 라이브 Fuseki 포함 전체 실행
+FUSEKI_URL=http://localhost:3030 uv run pytest -m integration
+```
+
+---
+
 ## 관련 프로젝트
 
 - [ontorag](https://github.com/nuri428/ontorag) — Ontology-aware RAG 프레임워크 (Semantic + Dynamic 레이어)
