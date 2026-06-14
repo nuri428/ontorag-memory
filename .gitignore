@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+.env
+*.ttl
+*.jsonld
+*.nt
+memory_*.ttl
+memory_*.jsonld
+memory_*.nt
