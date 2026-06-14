@@ -13,3 +13,5 @@ dist/
 memory_*.ttl
 memory_*.jsonld
 memory_*.nt
+.coverage
+chat.db
