@@ -544,6 +544,129 @@ SELECT {select_vars} WHERE {{
 
         return []
 
+    async def find_path_transitive(
+        self,
+        entity: str,
+        predicate: str,
+        *,
+        direction: str = "out",
+        limit: int = 100,
+    ) -> list[str]:
+        """특정 술어로 전이적으로 연결된 모든 노드 URI 반환.
+
+        SPARQL property path (`+`) 사용: 단일 술어를 따라 닿을 수 있는
+        모든 노드를 한 번의 쿼리로 가져온다. find_path()의 BFS와 달리
+        경로 엣지 대신 닿는 노드 URI만 반환.
+
+        Fuseki TDB2의 property path는 사이클을 자동 처리하므로 무한
+        루프 위험이 없다. limit으로 결과 상한을 제한한다.
+
+        Args:
+            entity: 시작 엔티티 URI 또는 레지스트리 이름.
+            predicate: 전이적으로 따라갈 술어 URI.
+            direction: "out"(entity→) 또는 "in"(→entity).
+            limit: 반환할 최대 URI 수 (1–10000).
+
+        Returns:
+            닿을 수 있는 노드 URI 목록.
+
+        Raises:
+            ValueError: direction이 유효하지 않거나 limit 범위 초과 시.
+        """
+        if direction not in ("out", "in"):
+            raise ValueError(
+                f"direction은 'out' 또는 'in'이어야 합니다. 입력: {direction!r}"
+            )
+        if not 1 <= limit <= 10000:
+            raise ValueError(f"limit은 1 이상 10000 이하여야 합니다. 입력: {limit}")
+        uri = self._resolve(entity)
+        _validate_uri(uri)
+        _validate_uri(predicate)
+        graph = self.identity.graph_uri
+
+        if direction == "out":
+            pattern = f"<{uri}> <{predicate}>+ ?node"
+        else:
+            pattern = f"?node <{predicate}>+ <{uri}>"
+
+        q = f"""
+SELECT DISTINCT ?node WHERE {{
+  GRAPH <{graph}> {{
+    {pattern} .
+  }}
+}} LIMIT {limit}"""
+        rows = await self._lc._sparql_select(q)
+        return [row["node"]["value"] for row in rows]
+
+    async def summarize(self, entity: str) -> str:
+        """엔티티에 대한 종합 마크다운 요약 생성.
+
+        why() + recall() 결과를 결합해 LLM 컨텍스트 주입에 최적화된
+        마크다운을 반환한다. 별도의 두 쿼리를 asyncio.gather로 병렬 실행.
+
+        Args:
+            entity: 엔티티 URI 또는 레지스트리 이름.
+
+        Returns:
+            마크다운 형식 요약 문자열.
+        """
+        uri = self._resolve(entity)
+        why_result, recent = await asyncio.gather(
+            self.why(uri),
+            self.recall(uri, limit=10),
+        )
+        lines = [why_result.to_context_str()]
+        if recent:
+            lines.append("\n## 최근 트리플 (시간 감쇠 순)")
+            for r in recent[:5]:
+                short_pred = r["predicate"].split(":")[-1]
+                lines.append(f"- `{short_pred}`: {r['object']}")
+            if len(recent) > 5:
+                lines.append(f"- … 외 {len(recent) - 5}개")
+        return "\n".join(lines)
+
+    async def remember_bulk(
+        self,
+        triples: list[dict[str, str | bool]],
+        *,
+        ttl_months: int | None = None,
+    ) -> int:
+        """dict 배열로 배치 저장 — MCP 호출에 적합한 인터페이스.
+
+        remember_many()의 MCP-친화적 wrapper. MCP 툴에서 JSON 배열을
+        직접 받아 저장할 수 있도록 dict 형식을 사용한다.
+
+        Args:
+            triples: [{"subject": str, "predicate": str, "object": str,
+                       "object_is_uri": bool}] 목록.
+                     object_is_uri가 없으면 레지스트리 검색으로 자동 판단.
+            ttl_months: 일괄 적용할 TTL 개월 수.
+
+        Returns:
+            저장된 트리플 수.
+
+        Raises:
+            ValueError: 필수 키 누락 또는 비어 있는 배열.
+        """
+        if not triples:
+            raise ValueError("triples 배열이 비어 있습니다.")
+        normalized: list[tuple[str, str, str] | tuple[str, str, str, bool]] = []
+        for i, t in enumerate(triples):
+            if "subject" not in t or "predicate" not in t or "object" not in t:
+                raise ValueError(
+                    f"triples[{i}]에 subject, predicate, object 키가 모두 있어야 합니다."
+                )
+            if "object_is_uri" in t:
+                normalized.append((
+                    str(t["subject"]),
+                    str(t["predicate"]),
+                    str(t["object"]),
+                    bool(t["object_is_uri"]),
+                ))
+            else:
+                normalized.append((str(t["subject"]), str(t["predicate"]), str(t["object"])))
+        return await self.remember_many(normalized, ttl_months=ttl_months)
+
     async def graph_stats(self, *, hub_limit: int = 10) -> GraphStats:
         """그래프 구조 건강도 통계 반환.
 

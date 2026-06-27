@@ -78,8 +78,8 @@ def test_all_tools_have_required_keys():
 
 
 def test_tool_count():
-    """등록된 툴 수가 12개."""
-    assert len(_TOOLS) == 12
+    """등록된 툴 수가 15개 (P0: 12 + P2: 3)."""
+    assert len(_TOOLS) == 15
 
 
 # ── remember ─────────────────────────────────────────────────────────────────

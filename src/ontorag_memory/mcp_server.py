@@ -183,6 +183,63 @@ _TOOLS: dict[str, dict[str, Any]] = {
         "properties": {},
         "required": [],
     },
+    "find_path_transitive": {
+        "description": (
+            "특정 술어로 전이적으로 연결된 모든 노드 URI를 반환한다. "
+            "SPARQL property path `+`를 사용하므로 find_path()의 BFS와 달리 "
+            "중간 경로 엣지가 아닌 '닿을 수 있는 노드' 전체를 한 번에 반환한다. "
+            "direction: out(entity→) 또는 in(→entity)."
+        ),
+        "properties": {
+            "entity": {"type": "string", "description": "시작 엔티티 URI 또는 레지스트리 이름."},
+            "predicate": {"type": "string", "description": "전이적으로 따라갈 술어 URI."},
+            "direction": {
+                "type": "string",
+                "enum": ["out", "in"],
+                "default": "out",
+            },
+            "limit": {"type": "integer", "default": 100},
+        },
+        "required": ["entity", "predicate"],
+    },
+    "summarize": {
+        "description": (
+            "엔티티에 대한 종합 마크다운 요약 반환 — why() + recall() 결합. "
+            "LLM 컨텍스트 주입에 최적화된 단일 문자열로 반환한다."
+        ),
+        "properties": {
+            "entity": {"type": "string", "description": "엔티티 URI 또는 레지스트리 이름."},
+        },
+        "required": ["entity"],
+    },
+    "remember_bulk": {
+        "description": (
+            "dict 배열로 여러 트리플을 한 번에 저장한다. "
+            "각 항목: {subject, predicate, object, object_is_uri(선택)}. "
+            "remember()의 배치 버전 — MCP 호출에 최적화."
+        ),
+        "properties": {
+            "triples": {
+                "type": "array",
+                "description": "저장할 트리플 목록.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "subject": {"type": "string"},
+                        "predicate": {"type": "string"},
+                        "object": {"type": "string"},
+                        "object_is_uri": {"type": "boolean", "default": False},
+                    },
+                    "required": ["subject", "predicate", "object"],
+                },
+            },
+            "ttl_months": {
+                "type": "integer",
+                "description": "자동 만료 개월 수 (없으면 영구).",
+            },
+        },
+        "required": ["triples"],
+    },
     "prune": {
         "description": "N개월 이상 된 노드 또는 TTL이 만료된 노드를 삭제한다.",
         "properties": {
@@ -275,6 +332,24 @@ async def _dispatch(mem: Any, name: str, args: dict[str, Any]) -> Any:
 
     if name == "stats":
         return await mem.stats()
+
+    if name == "find_path_transitive":
+        return await mem.find_path_transitive(
+            args["entity"],
+            args["predicate"],
+            direction=args.get("direction", "out"),
+            limit=args.get("limit", 100),
+        )
+
+    if name == "summarize":
+        return await mem.summarize(args["entity"])
+
+    if name == "remember_bulk":
+        count = await mem.remember_bulk(
+            args["triples"],
+            ttl_months=args.get("ttl_months"),
+        )
+        return {"stored": count}
 
     if name == "prune":
         return await mem.prune(
