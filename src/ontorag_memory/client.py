@@ -26,12 +26,16 @@ from ontorag_memory.why_result import Influence, OutgoingEdge, WhyResult
 
 
 _SAFE_URI_PREFIXES = ("urn:", "http://", "https://")
+# RFC 3986 이외 문자 + SPARQL 구조 탈출 가능 문자 차단
+_UNSAFE_URI_CHARS = re.compile(r'[<>"\s{}|\\^`]')
 
 
 def _validate_uri(uri: str) -> None:
-    """SPARQL 인젝션 방지 — URI가 허용된 접두사로 시작하는지 검사."""
+    """SPARQL 인젝션 방지 — 접두사 + 위험 문자 이중 검증."""
     if not any(uri.startswith(p) for p in _SAFE_URI_PREFIXES):
         raise ValueError(f"안전하지 않은 URI: {uri!r}. urn: 또는 http(s)://로 시작해야 합니다.")
+    if _UNSAFE_URI_CHARS.search(uri):
+        raise ValueError(f"URI에 허용되지 않는 문자 포함: {uri!r}")
 
 
 class MemoryClient:
@@ -103,7 +107,7 @@ class MemoryClient:
         """
         s = self._resolve(subject)
         if object_is_uri is None:
-            object_is_uri = obj in self.registry or obj.startswith("urn:")
+            object_is_uri = self._is_uri_like(obj)
         o = self._resolve(obj) if object_is_uri else obj
         if skip_if_exists and await self.check_duplicate(s, predicate, o, object_is_uri=object_is_uri):
             return False
@@ -127,7 +131,7 @@ class MemoryClient:
                 s_text, p, o_text, is_uri = item  # type: ignore[misc]
             else:
                 s_text, p, o_text = item  # type: ignore[misc]
-                is_uri = o_text in self.registry or o_text.startswith(("urn:", "http"))
+                is_uri = self._is_uri_like(o_text)
             s = self._resolve(s_text)
             o = self._resolve(o_text) if is_uri else o_text
             resolved.append((s, p, o, is_uri))
@@ -161,11 +165,17 @@ class MemoryClient:
 
         uri = self._resolve(entity)
         graph = self.identity.graph_uri
+        # OPTIONAL 서브쿼리로 MAX(assertedAt)만 취합 — 다중 assertedAt 트리플이
+        # 쌓여도 행 곱셈이 발생하지 않음
         q = f"""
 SELECT ?p ?o ?t WHERE {{
   GRAPH <{graph}> {{
     <{uri}> ?p ?o .
-    OPTIONAL {{ <{uri}> <{P.ASSERTED_AT}> ?t . }}
+    OPTIONAL {{
+      SELECT (MAX(?ts) AS ?t) WHERE {{
+        GRAPH <{graph}> {{ <{uri}> <{P.ASSERTED_AT}> ?ts . }}
+      }}
+    }}
   }}
   FILTER(!STRSTARTS(STR(?p), "urn:ag:meta:"))
 }}"""
@@ -223,8 +233,10 @@ SELECT ?p ?o ?t WHERE {{
             True이면 이미 존재.
         """
         _validate_uri(subject)
+        _validate_uri(predicate)
         graph = self.identity.graph_uri
         if object_is_uri:
+            _validate_uri(obj)
             obj_term = f"<{obj}>"
         else:
             escaped = obj.replace("\\", "\\\\").replace('"', '\\"')
@@ -432,6 +444,9 @@ WHERE {{
   }}
 }}"""
 
+        # hub_limit * 4 를 상한으로 줘서 degree 계산에 필요한 충분한 후보를 가져오되
+        # 그래프가 커져도 메모리를 폭발시키지 않는다
+        _degree_limit = max(hub_limit * 4, 200)
         out_q = f"""
 SELECT ?node (COUNT(*) AS ?cnt) WHERE {{
   GRAPH <{graph}> {{
@@ -439,7 +454,7 @@ SELECT ?node (COUNT(*) AS ?cnt) WHERE {{
     FILTER(!STRSTARTS(STR(?p), "{meta}"))
     FILTER(STRSTARTS(STR(?node), "urn:"))
   }}
-}} GROUP BY ?node"""
+}} GROUP BY ?node ORDER BY DESC(?cnt) LIMIT {_degree_limit}"""
 
         in_q = f"""
 SELECT ?node (COUNT(*) AS ?cnt) WHERE {{
@@ -449,7 +464,7 @@ SELECT ?node (COUNT(*) AS ?cnt) WHERE {{
     FILTER(isURI(?node))
     FILTER(STRSTARTS(STR(?node), "urn:"))
   }}
-}} GROUP BY ?node"""
+}} GROUP BY ?node ORDER BY DESC(?cnt) LIMIT {_degree_limit}"""
 
         pred_q = f"""
 SELECT ?p (COUNT(*) AS ?cnt) WHERE {{
@@ -660,6 +675,10 @@ SELECT ?entry ?tag WHERE {{
     # ── 내부 ─────────────────────────────────────────────────────────────────
 
     def _resolve(self, text: str) -> str:
-        if text.startswith("urn:") or text.startswith("http"):
+        if text.startswith(("urn:", "http://", "https://")):
             return text
         return self.registry.resolve(text)
+
+    def _is_uri_like(self, text: str) -> bool:
+        """레지스트리 등록 여부 또는 URI 접두사 기준으로 URI 여부 판단."""
+        return text in self.registry or text.startswith(("urn:", "http://", "https://"))

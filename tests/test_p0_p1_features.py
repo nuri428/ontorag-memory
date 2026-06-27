@@ -213,6 +213,17 @@ def test_validate_uri_rejects_plain_name():
         _validate_uri("ontorag")
 
 
+def test_validate_uri_rejects_sparql_escape_via_angle_bracket():
+    """prefix는 맞지만 > 문자로 SPARQL 구조 탈출 시도 차단."""
+    with pytest.raises(ValueError, match="허용되지 않는 문자"):
+        _validate_uri("urn:ag:rel:foo> . OPTIONAL { ?s ?p ?o } # ")
+
+
+def test_validate_uri_rejects_space_in_uri():
+    with pytest.raises(ValueError):
+        _validate_uri("urn:ag:proj:my project")
+
+
 # ── 시간 감쇠 공식 (exp(-λ * days)) ──────────────────────────────────────────
 
 def test_decay_score_fresh_item():
