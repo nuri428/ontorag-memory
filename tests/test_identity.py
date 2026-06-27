@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ontorag_memory.identity import AgentIdentity, _workspace_slug
+from ontorag_memory.registry import EntityRegistry
 
 
 def test_ontology_id_format():
@@ -60,7 +61,6 @@ def test_same_user_workspace_same_graph_different_sessions():
 
 
 def test_registry_resolve():
-    from ontorag_memory.registry import EntityRegistry
     reg = EntityRegistry()
     assert reg.resolve("patent board")          == "urn:ag:proj:patent-board"
     assert reg.resolve("patent_board")          == "urn:ag:proj:patent-board"
@@ -70,7 +70,6 @@ def test_registry_resolve():
 
 
 def test_registry_unknown_term_auto_slug():
-    from ontorag_memory.registry import EntityRegistry
     reg = EntityRegistry()
     uri = reg.resolve("my unknown concept")
     assert uri.startswith("urn:ag:entity:")

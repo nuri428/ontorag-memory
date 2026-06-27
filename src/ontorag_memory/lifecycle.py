@@ -5,21 +5,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-from datetime import datetime, timedelta, timezone
+import warnings
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
+
+import httpx
 
 from ontorag_memory.identity import AgentIdentity
 from ontorag_memory.registry import P
 
 
 def _now_iso() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _cutoff_iso(months: int) -> str:
-    dt = datetime.now(tz=timezone.utc) - timedelta(days=months * 30)
+    dt = datetime.now(tz=UTC) - timedelta(days=months * 30)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -50,7 +54,7 @@ class MemoryLifecycle:
             (subject, P.WORKSPACE, self._id.workspace, False),
         ]
         if ttl_months is not None:
-            dt = datetime.now(tz=timezone.utc) + timedelta(days=ttl_months * 30)
+            dt = datetime.now(tz=UTC) + timedelta(days=ttl_months * 30)
             triples.append((subject, P.EXPIRES_AT, dt.strftime("%Y-%m-%dT%H:%M:%SZ"), False))
         await self._store.assert_triples(triples, ontology=self._id.ontology_id)
 
@@ -71,7 +75,7 @@ class MemoryLifecycle:
                 enriched.append((s, P.IN_SESSION, self._id.session_uri, True))
                 enriched.append((s, P.WORKSPACE, self._id.workspace, False))
                 if ttl_months is not None:
-                    dt = datetime.now(tz=timezone.utc) + timedelta(days=ttl_months * 30)
+                    dt = datetime.now(tz=UTC) + timedelta(days=ttl_months * 30)
                     enriched.append((s, P.EXPIRES_AT, dt.strftime("%Y-%m-%dT%H:%M:%SZ"), False))
                 seen.add(s)
         await self._store.assert_triples(enriched, ontology=self._id.ontology_id)
@@ -85,46 +89,86 @@ class MemoryLifecycle:
         *,
         dry_run: bool = False,
     ) -> dict[str, Any]:
-        """N개월 이상 된 노드와 그 트리플을 삭제.
+        """오래된 노드(assertedAt 기준) + 만료된 노드(expiresAt 기준) 삭제.
+
+        두 조건을 UNION으로 묶어 한 번의 원자적 쿼리로 처리한다.
 
         Args:
-            older_than_months: 이 기간보다 오래된 노드 삭제.
+            older_than_months: assertedAt 기준 이 기간보다 오래된 노드 삭제.
             dry_run: True이면 삭제 없이 대상 수량만 반환.
 
         Returns:
-            {"subjects": N, "triples": M, "dry_run": bool}
+            {"subjects": N, "triples": M, "expired": K, "dry_run": bool}
         """
         cutoff = _cutoff_iso(older_than_months)
-        graph = self._id.graph_uri
+        now    = _now_iso()
+        graph  = self._id.graph_uri
         xsd_dt = "http://www.w3.org/2001/XMLSchema#dateTime"
 
         count_q = f"""
 SELECT (COUNT(DISTINCT ?s) AS ?subjects) (COUNT(*) AS ?triples)
 WHERE {{
   GRAPH <{graph}> {{
-    ?s <{P.ASSERTED_AT}> ?t .
-    FILTER(?t < "{cutoff}"^^<{xsd_dt}>)
+    {{
+      ?s <{P.ASSERTED_AT}> ?t .
+      FILTER(?t < "{cutoff}"^^<{xsd_dt}>)
+    }}
+    UNION
+    {{
+      ?s <{P.EXPIRES_AT}> ?exp .
+      FILTER(?exp < "{now}"^^<{xsd_dt}>)
+    }}
     ?s ?p ?o .
   }}
 }}"""
-        rows = await self._sparql_select(count_q)
+        # 만료 노드만 별도 집계 (보고용)
+        expired_q = f"""
+SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE {{
+  GRAPH <{graph}> {{
+    ?s <{P.EXPIRES_AT}> ?exp .
+    FILTER(?exp < "{now}"^^<{xsd_dt}>)
+  }}
+}}"""
+
+        rows, expired_rows = await asyncio.gather(
+            self._sparql_select(count_q),
+            self._sparql_select(expired_q),
+        )
         subjects_n = int(rows[0].get("subjects", {}).get("value", 0)) if rows else 0
         triples_n  = int(rows[0].get("triples",  {}).get("value", 0)) if rows else 0
+        expired_n  = int(expired_rows[0].get("n", {}).get("value", 0)) if expired_rows else 0
 
         if dry_run or subjects_n == 0:
-            return {"subjects": subjects_n, "triples": triples_n, "dry_run": True}
+            return {
+                "subjects": subjects_n,
+                "triples":  triples_n,
+                "expired":  expired_n,
+                "dry_run":  True,
+            }
 
         delete_q = f"""
 DELETE {{ GRAPH <{graph}> {{ ?s ?p ?o . }} }}
 WHERE {{
   GRAPH <{graph}> {{
-    ?s <{P.ASSERTED_AT}> ?t .
-    FILTER(?t < "{cutoff}"^^<{xsd_dt}>)
+    {{
+      ?s <{P.ASSERTED_AT}> ?t .
+      FILTER(?t < "{cutoff}"^^<{xsd_dt}>)
+    }}
+    UNION
+    {{
+      ?s <{P.EXPIRES_AT}> ?exp .
+      FILTER(?exp < "{now}"^^<{xsd_dt}>)
+    }}
     ?s ?p ?o .
   }}
 }}"""
         await self._store._sparql_update(delete_q)
-        return {"subjects": subjects_n, "triples": triples_n, "dry_run": False}
+        return {
+            "subjects": subjects_n,
+            "triples":  triples_n,
+            "expired":  expired_n,
+            "dry_run":  False,
+        }
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
@@ -263,16 +307,30 @@ WHERE {{
 
     # ── 내부 SPARQL 유틸 ──────────────────────────────────────────────────────
 
-    async def _sparql_select(self, query: str) -> list[dict]:
-        import httpx
-        auth = httpx.BasicAuth(
-            os.environ.get("FUSEKI_USER", "admin"),
-            os.environ.get("FUSEKI_PASSWORD", "admin"),
-        )
+    def _sparql_endpoint(self) -> tuple[str, httpx.BasicAuth]:
+        """Fuseki SPARQL 엔드포인트 URL과 BasicAuth를 반환.
+
+        환경 변수가 설정되지 않으면 기본값("admin"/"admin")을 사용하되 경고 발생.
+        """
+        user = os.environ.get("FUSEKI_USER", "")
+        password = os.environ.get("FUSEKI_PASSWORD", "")
+        if not user or not password:
+            warnings.warn(
+                "FUSEKI_USER / FUSEKI_PASSWORD 환경 변수가 설정되지 않아 기본값 사용 중. "
+                "프로덕션 배포 시 반드시 설정하세요.",
+                stacklevel=3,
+            )
+            user = user or "admin"
+            password = password or "admin"
+
         url = (
             f"{os.environ.get('FUSEKI_URL', 'http://localhost:3030')}"
             f"/{os.environ.get('FUSEKI_DATASET', 'ontorag')}/sparql"
         )
+        return url, httpx.BasicAuth(user, password)
+
+    async def _sparql_select(self, query: str) -> list[dict]:
+        url, auth = self._sparql_endpoint()
         async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
             resp = await client.post(
                 url,
@@ -282,21 +340,24 @@ WHERE {{
             resp.raise_for_status()
             return resp.json()["results"]["bindings"]
 
+    async def _sparql_ask(self, query: str) -> bool:
+        url, auth = self._sparql_endpoint()
+        async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
+            resp = await client.post(
+                url,
+                data={"query": query},
+                headers={"Accept": "application/sparql-results+json"},
+            )
+            resp.raise_for_status()
+            return resp.json().get("boolean", False)
+
     async def _sparql_construct(self, query: str, fmt: str) -> str:
-        import httpx
         accept = {
             "turtle":   "text/turtle",
             "jsonld":   "application/ld+json",
             "ntriples": "application/n-triples",
         }[fmt]
-        auth = httpx.BasicAuth(
-            os.environ.get("FUSEKI_USER", "admin"),
-            os.environ.get("FUSEKI_PASSWORD", "admin"),
-        )
-        url = (
-            f"{os.environ.get('FUSEKI_URL', 'http://localhost:3030')}"
-            f"/{os.environ.get('FUSEKI_DATASET', 'ontorag')}/sparql"
-        )
+        url, auth = self._sparql_endpoint()
         async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
             resp = await client.post(
                 url, data={"query": query}, headers={"Accept": accept}

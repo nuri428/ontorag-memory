@@ -41,7 +41,7 @@ class EntityRegistry:
                 self._alias_map[alias.lower()] = uri
 
     @classmethod
-    def merged(cls, extra_path: str | Path) -> "EntityRegistry":
+    def merged(cls, extra_path: str | Path) -> EntityRegistry:
         """기본 레지스트리에 추가 YAML을 병합한 레지스트리."""
         instance = cls()           # 기본 먼저
         instance._load(Path(extra_path))  # 추가 항목 덮어쓰기
@@ -60,7 +60,7 @@ class EntityRegistry:
     def label_of(self, uri: str) -> str:
         """canonical URI → 사람이 읽을 수 있는 레이블."""
         meta = self._canonical.get(uri)
-        return meta["label"] if meta else uri.split(":")[-1]
+        return meta["label"] if meta else uri.rsplit(":", maxsplit=1)[-1]
 
     def all_uris(self) -> list[str]:
         return list(self._canonical.keys())
@@ -83,12 +83,17 @@ class P:
     RELATED_TO   = "urn:ag:rel:relatedTo"
     LAYER        = "urn:ag:rel:layer"
     TARGET       = "urn:ag:rel:dogfoodTarget"
-    RATIONALE    = "urn:ag:rel:rationale"
-    MADE_AT      = "urn:ag:rel:madeAt"
-    REJECTED     = "urn:ag:rel:rejectedAlternative"
-    DESCRIPTION  = "urn:ag:rel:description"
-    VERSION      = "urn:ag:rel:version"
-    CONCEPT      = "urn:ag:rel:concept"
+    RATIONALE       = "urn:ag:rel:rationale"
+    MADE_AT         = "urn:ag:rel:madeAt"
+    REJECTED        = "urn:ag:rel:rejectedAlternative"
+    DECIDED_AGAINST = "urn:ag:rel:decidedAgainst"
+    DESCRIPTION     = "urn:ag:rel:description"
+    VERSION         = "urn:ag:rel:version"
+    CONCEPT         = "urn:ag:rel:concept"
+    CONTENT         = "urn:ag:rel:content"
+    TAG             = "urn:ag:rel:tag"
+    # 다이어리 타입
+    DIARY_ENTRY     = "urn:ag:type:DiaryEntry"
     # 생명주기 메타
     ASSERTED_AT  = "urn:ag:meta:assertedAt"
     IN_SESSION   = "urn:ag:meta:inSession"
