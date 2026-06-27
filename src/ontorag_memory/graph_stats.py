@@ -66,7 +66,7 @@ class GraphStats(BaseModel):
                 f"- {h.uri}  (degree {h.degree})" for h in self.hub_nodes
             )
         if self.isolated_nodes:
-            lines.append(f"## 고립 노드 ({len(self.isolated_nodes)}개 — 역방향 참조 없음)")
+            lines.append(f"## 역방향 참조 없는 노드 ({len(self.isolated_nodes)}개)")
             lines.extend(f"- {n}" for n in self.isolated_nodes[:20])
             if len(self.isolated_nodes) > 20:
                 lines.append(f"  … 외 {len(self.isolated_nodes) - 20}개")

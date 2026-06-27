@@ -263,16 +263,36 @@ WHERE {{
 
     # ── 내부 SPARQL 유틸 ──────────────────────────────────────────────────────
 
-    async def _sparql_select(self, query: str) -> list[dict]:
+    def _sparql_endpoint(self) -> tuple[str, "httpx.BasicAuth"]:
+        """Fuseki SPARQL 엔드포인트 URL과 BasicAuth를 반환.
+
+        환경 변수가 설정되지 않으면 기본값("admin"/"admin")을 사용하되 경고 발생.
+        """
+        import warnings
+
         import httpx
-        auth = httpx.BasicAuth(
-            os.environ.get("FUSEKI_USER", "admin"),
-            os.environ.get("FUSEKI_PASSWORD", "admin"),
-        )
+
+        user = os.environ.get("FUSEKI_USER", "")
+        password = os.environ.get("FUSEKI_PASSWORD", "")
+        if not user or not password:
+            warnings.warn(
+                "FUSEKI_USER / FUSEKI_PASSWORD 환경 변수가 설정되지 않아 기본값 사용 중. "
+                "프로덕션 배포 시 반드시 설정하세요.",
+                stacklevel=3,
+            )
+            user = user or "admin"
+            password = password or "admin"
+
         url = (
             f"{os.environ.get('FUSEKI_URL', 'http://localhost:3030')}"
             f"/{os.environ.get('FUSEKI_DATASET', 'ontorag')}/sparql"
         )
+        return url, httpx.BasicAuth(user, password)
+
+    async def _sparql_select(self, query: str) -> list[dict]:
+        import httpx
+
+        url, auth = self._sparql_endpoint()
         async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
             resp = await client.post(
                 url,
@@ -284,14 +304,8 @@ WHERE {{
 
     async def _sparql_ask(self, query: str) -> bool:
         import httpx
-        auth = httpx.BasicAuth(
-            os.environ.get("FUSEKI_USER", "admin"),
-            os.environ.get("FUSEKI_PASSWORD", "admin"),
-        )
-        url = (
-            f"{os.environ.get('FUSEKI_URL', 'http://localhost:3030')}"
-            f"/{os.environ.get('FUSEKI_DATASET', 'ontorag')}/sparql"
-        )
+
+        url, auth = self._sparql_endpoint()
         async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
             resp = await client.post(
                 url,
@@ -303,19 +317,13 @@ WHERE {{
 
     async def _sparql_construct(self, query: str, fmt: str) -> str:
         import httpx
+
         accept = {
             "turtle":   "text/turtle",
             "jsonld":   "application/ld+json",
             "ntriples": "application/n-triples",
         }[fmt]
-        auth = httpx.BasicAuth(
-            os.environ.get("FUSEKI_USER", "admin"),
-            os.environ.get("FUSEKI_PASSWORD", "admin"),
-        )
-        url = (
-            f"{os.environ.get('FUSEKI_URL', 'http://localhost:3030')}"
-            f"/{os.environ.get('FUSEKI_DATASET', 'ontorag')}/sparql"
-        )
+        url, auth = self._sparql_endpoint()
         async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
             resp = await client.post(
                 url, data={"query": query}, headers={"Accept": accept}

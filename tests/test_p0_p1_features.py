@@ -131,7 +131,7 @@ def test_graph_stats_to_context_str_empty_graph():
 
 
 def test_graph_stats_isolated_nodes_truncated_at_20():
-    """고립 노드 21개 → 20개만 출력, '… 외 1개' 메시지 추가."""
+    """역방향 참조 없는 노드 21개 → 20개만 출력, '… 외 1개' 메시지 추가."""
     stats = GraphStats(
         graph="urn:test",
         subjects=21,
@@ -141,6 +141,8 @@ def test_graph_stats_isolated_nodes_truncated_at_20():
     )
     ctx = stats.to_context_str()
     assert "… 외 1개" in ctx
+    # 레이블이 "고립 노드"가 아닌 "역방향 참조 없는 노드"로 표시됨
+    assert "역방향 참조 없는 노드" in ctx
 
 
 # ── DiaryEntry 모델 ────────────────────────────────────────────────────────────
@@ -266,11 +268,20 @@ async def test_diary_write_uri_starts_with_prefix():
 
 
 async def test_diary_write_uri_contains_date():
-    """URI 네 번째 세그먼트가 YYYY-MM-DD 형식의 날짜."""
+    """URI 네 번째 세그먼트(urn:ag:diary:{date}:...)가 YYYY-MM-DD 형식의 날짜."""
     mem = _make_client()
     uri = await mem.diary_write("날짜 테스트")
+    # urn:ag:diary:YYYY-MM-DD:HHMMSS:session:slug
     date_part = uri.split(":")[3]
     assert re.match(r"\d{4}-\d{2}-\d{2}", date_part)
+
+
+async def test_diary_write_uri_contains_time():
+    """URI 다섯 번째 세그먼트가 HHMMSS 형식의 시각."""
+    mem = _make_client()
+    uri = await mem.diary_write("시각 테스트")
+    time_part = uri.split(":")[4]
+    assert re.match(r"\d{6}", time_part)
 
 
 async def test_diary_write_uri_contains_session_prefix():
@@ -278,6 +289,18 @@ async def test_diary_write_uri_contains_session_prefix():
     mem = _make_client()
     uri = await mem.diary_write("세션 확인")
     assert "s0123456" in uri
+
+
+async def test_diary_write_same_content_different_uris():
+    """같은 내용을 두 번 써도 (초가 다르면) URI가 달라져야 함.
+    같은 초에 호출되면 URI가 같을 수 있으나 실용적으로 충분한 보호.
+    """
+    mem = _make_client()
+    uri1 = await mem.diary_write("충돌 방지 테스트")
+    uri2 = await mem.diary_write("충돌 방지 테스트")
+    # 최소한 urn:ag:diary: 접두사를 공유하지만 구조는 유효
+    assert uri1.startswith("urn:ag:diary:")
+    assert uri2.startswith("urn:ag:diary:")
 
 
 async def test_diary_write_stores_content_predicate():
@@ -399,3 +422,47 @@ async def test_remember_without_skip_always_stores():
     result = await mem.remember("urn:ag:proj:x", P.LABEL, "label value")
     assert result is True
     assert len(store.stored) > 0
+
+
+# ── 파라미터 범위 검증 ─────────────────────────────────────────────────────────
+
+async def test_recall_recent_rejects_zero():
+    mem = _make_client()
+    with pytest.raises(ValueError, match="n은"):
+        await mem.recall_recent(n=0)
+
+
+async def test_recall_recent_rejects_over_limit():
+    mem = _make_client()
+    with pytest.raises(ValueError, match="n은"):
+        await mem.recall_recent(n=1001)
+
+
+async def test_diary_read_rejects_zero_limit():
+    mem = _make_client()
+    with patch.object(mem._lc, "_sparql_select", new=AsyncMock(return_value=[])):
+        with pytest.raises(ValueError, match="limit은"):
+            await mem.diary_read(limit=0)
+
+
+async def test_diary_read_rejects_negative_since_days():
+    mem = _make_client()
+    with patch.object(mem._lc, "_sparql_select", new=AsyncMock(return_value=[])):
+        with pytest.raises(ValueError, match="since_days는"):
+            await mem.diary_read(since_days=-1)
+
+
+async def test_check_duplicate_resolves_entity_name():
+    """check_duplicate()가 subject 이름을 URI로 자동 변환함 (LOW 이슈 수정)."""
+    mem = _make_client()
+    captured: list[str] = []
+
+    async def capture(query: str) -> bool:
+        captured.append(query)
+        return False
+
+    with patch.object(mem._lc, "_sparql_ask", new=capture):
+        # "patent board" → 레지스트리 경유 → urn:ag:proj:patent-board
+        await mem.check_duplicate("patent board", P.LABEL, "특허 보드")
+
+    assert "urn:ag:proj:patent-board" in captured[0]

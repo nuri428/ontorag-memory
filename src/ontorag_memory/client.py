@@ -219,19 +219,20 @@ SELECT ?p ?o ?t WHERE {{
     ) -> bool:
         """동일한 (subject, predicate, object) 트리플이 이미 존재하는지 확인.
 
-        SPARQL ASK로 exact match만 검사한다. 중복 저장 시 assertedAt이
-        새 값으로 추가되는 것을 방지하기 위해 remember(skip_if_exists=True)와
-        함께 사용한다.
+        SPARQL ASK로 exact match만 검사한다. subject/predicate는 레지스트리 경유
+        URI로 자동 변환된다. 중복 저장 방지용으로 remember(skip_if_exists=True)와
+        함께 사용하거나 독립적으로 호출 가능.
 
         Args:
-            subject: URI (already resolved).
-            predicate: predicate URI.
+            subject: 엔티티 이름 또는 URI (레지스트리 경유 자동 변환).
+            predicate: predicate URI (P.xxx 상수 사용 권장).
             obj: 객체 값 (리터럴 또는 URI).
             object_is_uri: obj가 URI인지 여부.
 
         Returns:
             True이면 이미 존재.
         """
+        subject = self._resolve(subject)
         _validate_uri(subject)
         _validate_uri(predicate)
         graph = self.identity.graph_uri
@@ -250,9 +251,14 @@ SELECT ?p ?o ?t WHERE {{
         assertedAt 기준 내림차순 정렬. 에이전트가 "최근에 무엇을 기억했나"를
         빠르게 파악하는 용도.
 
+        Args:
+            n: 반환할 최대 항목 수 (1–1000).
+
         Returns:
             [{"uri": str, "latest_asserted_at": iso_str}]
         """
+        if not 1 <= n <= 1000:
+            raise ValueError(f"n은 1 이상 1000 이하여야 합니다. 입력: {n}")
         graph = self.identity.graph_uri
         q = f"""
 SELECT ?s (MAX(?t) AS ?latest) WHERE {{
@@ -554,9 +560,11 @@ SELECT ?p (COUNT(*) AS ?cnt) WHERE {{
 
         now = datetime.now(tz=timezone.utc)
         date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H%M%S")
         slug = re.sub(r"[^a-z0-9가-힣]+", "-", content[:40].lower()).strip("-")
         session_short = self.identity.session_id[:8]
-        entry_uri = f"urn:ag:diary:{date_str}:{session_short}:{slug}"
+        # 날짜 + 시각(초) + 세션 + slug → 같은 날 동일 내용 재작성 시 URI 충돌 방지
+        entry_uri = f"urn:ag:diary:{date_str}:{time_str}:{session_short}:{slug}"
 
         triples: list[tuple[str, str, str, bool]] = [
             (entry_uri, P.CONTENT, content, False),
@@ -578,12 +586,16 @@ SELECT ?p (COUNT(*) AS ?cnt) WHERE {{
         """최근 다이어리 항목 반환.
 
         Args:
-            limit: 반환할 최대 항목 수.
-            since_days: 이 일수 이내 항목만 반환. None이면 전체.
+            limit: 반환할 최대 항목 수 (1–1000).
+            since_days: 이 일수 이내 항목만 반환. None이면 전체. 0 이상이어야 함.
 
         Returns:
             DiaryEntry 목록 (최신순).
         """
+        if not 1 <= limit <= 1000:
+            raise ValueError(f"limit은 1 이상 1000 이하여야 합니다. 입력: {limit}")
+        if since_days is not None and since_days < 0:
+            raise ValueError(f"since_days는 0 이상이어야 합니다. 입력: {since_days}")
         from datetime import datetime, timedelta, timezone
 
         graph = self.identity.graph_uri
