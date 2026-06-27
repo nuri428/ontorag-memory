@@ -282,6 +282,25 @@ WHERE {{
             resp.raise_for_status()
             return resp.json()["results"]["bindings"]
 
+    async def _sparql_ask(self, query: str) -> bool:
+        import httpx
+        auth = httpx.BasicAuth(
+            os.environ.get("FUSEKI_USER", "admin"),
+            os.environ.get("FUSEKI_PASSWORD", "admin"),
+        )
+        url = (
+            f"{os.environ.get('FUSEKI_URL', 'http://localhost:3030')}"
+            f"/{os.environ.get('FUSEKI_DATASET', 'ontorag')}/sparql"
+        )
+        async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
+            resp = await client.post(
+                url,
+                data={"query": query},
+                headers={"Accept": "application/sparql-results+json"},
+            )
+            resp.raise_for_status()
+            return resp.json().get("boolean", False)
+
     async def _sparql_construct(self, query: str, fmt: str) -> str:
         import httpx
         accept = {

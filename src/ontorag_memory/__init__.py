@@ -11,9 +11,12 @@ Quick start:
 """
 
 from ontorag_memory.client import MemoryClient
+from ontorag_memory.diary import DiaryEntry
+from ontorag_memory.graph_stats import GraphStats, HubNode, PredicateCount
 from ontorag_memory.identity import AgentIdentity
 from ontorag_memory.lifecycle import MemoryLifecycle
 from ontorag_memory.registry import EntityRegistry, P
+from ontorag_memory.why_result import Influence, OutgoingEdge, WhyResult
 
 __version__ = "0.1.0"
 __all__ = [
@@ -22,4 +25,11 @@ __all__ = [
     "MemoryLifecycle",
     "EntityRegistry",
     "P",
+    "WhyResult",
+    "Influence",
+    "OutgoingEdge",
+    "GraphStats",
+    "HubNode",
+    "PredicateCount",
+    "DiaryEntry",
 ]
