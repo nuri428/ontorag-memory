@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import warnings
 from datetime import UTC, datetime, timedelta
@@ -88,46 +89,86 @@ class MemoryLifecycle:
         *,
         dry_run: bool = False,
     ) -> dict[str, Any]:
-        """N개월 이상 된 노드와 그 트리플을 삭제.
+        """오래된 노드(assertedAt 기준) + 만료된 노드(expiresAt 기준) 삭제.
+
+        두 조건을 UNION으로 묶어 한 번의 원자적 쿼리로 처리한다.
 
         Args:
-            older_than_months: 이 기간보다 오래된 노드 삭제.
+            older_than_months: assertedAt 기준 이 기간보다 오래된 노드 삭제.
             dry_run: True이면 삭제 없이 대상 수량만 반환.
 
         Returns:
-            {"subjects": N, "triples": M, "dry_run": bool}
+            {"subjects": N, "triples": M, "expired": K, "dry_run": bool}
         """
         cutoff = _cutoff_iso(older_than_months)
-        graph = self._id.graph_uri
+        now    = _now_iso()
+        graph  = self._id.graph_uri
         xsd_dt = "http://www.w3.org/2001/XMLSchema#dateTime"
 
         count_q = f"""
 SELECT (COUNT(DISTINCT ?s) AS ?subjects) (COUNT(*) AS ?triples)
 WHERE {{
   GRAPH <{graph}> {{
-    ?s <{P.ASSERTED_AT}> ?t .
-    FILTER(?t < "{cutoff}"^^<{xsd_dt}>)
+    {{
+      ?s <{P.ASSERTED_AT}> ?t .
+      FILTER(?t < "{cutoff}"^^<{xsd_dt}>)
+    }}
+    UNION
+    {{
+      ?s <{P.EXPIRES_AT}> ?exp .
+      FILTER(?exp < "{now}"^^<{xsd_dt}>)
+    }}
     ?s ?p ?o .
   }}
 }}"""
-        rows = await self._sparql_select(count_q)
+        # 만료 노드만 별도 집계 (보고용)
+        expired_q = f"""
+SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE {{
+  GRAPH <{graph}> {{
+    ?s <{P.EXPIRES_AT}> ?exp .
+    FILTER(?exp < "{now}"^^<{xsd_dt}>)
+  }}
+}}"""
+
+        rows, expired_rows = await asyncio.gather(
+            self._sparql_select(count_q),
+            self._sparql_select(expired_q),
+        )
         subjects_n = int(rows[0].get("subjects", {}).get("value", 0)) if rows else 0
         triples_n  = int(rows[0].get("triples",  {}).get("value", 0)) if rows else 0
+        expired_n  = int(expired_rows[0].get("n", {}).get("value", 0)) if expired_rows else 0
 
         if dry_run or subjects_n == 0:
-            return {"subjects": subjects_n, "triples": triples_n, "dry_run": True}
+            return {
+                "subjects": subjects_n,
+                "triples":  triples_n,
+                "expired":  expired_n,
+                "dry_run":  True,
+            }
 
         delete_q = f"""
 DELETE {{ GRAPH <{graph}> {{ ?s ?p ?o . }} }}
 WHERE {{
   GRAPH <{graph}> {{
-    ?s <{P.ASSERTED_AT}> ?t .
-    FILTER(?t < "{cutoff}"^^<{xsd_dt}>)
+    {{
+      ?s <{P.ASSERTED_AT}> ?t .
+      FILTER(?t < "{cutoff}"^^<{xsd_dt}>)
+    }}
+    UNION
+    {{
+      ?s <{P.EXPIRES_AT}> ?exp .
+      FILTER(?exp < "{now}"^^<{xsd_dt}>)
+    }}
     ?s ?p ?o .
   }}
 }}"""
         await self._store._sparql_update(delete_q)
-        return {"subjects": subjects_n, "triples": triples_n, "dry_run": False}
+        return {
+            "subjects": subjects_n,
+            "triples":  triples_n,
+            "expired":  expired_n,
+            "dry_run":  False,
+        }
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
