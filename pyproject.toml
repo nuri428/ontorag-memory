@@ -34,6 +34,7 @@ dev = [
 
 [project.scripts]
 ontorag-memory = "ontorag_memory.cli:app"
+ontorag-mcp = "ontorag_memory.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/nuri428/ontorag-memory"
