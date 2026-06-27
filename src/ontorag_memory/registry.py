@@ -41,7 +41,7 @@ class EntityRegistry:
                 self._alias_map[alias.lower()] = uri
 
     @classmethod
-    def merged(cls, extra_path: str | Path) -> "EntityRegistry":
+    def merged(cls, extra_path: str | Path) -> EntityRegistry:
         """기본 레지스트리에 추가 YAML을 병합한 레지스트리."""
         instance = cls()           # 기본 먼저
         instance._load(Path(extra_path))  # 추가 항목 덮어쓰기
@@ -60,7 +60,7 @@ class EntityRegistry:
     def label_of(self, uri: str) -> str:
         """canonical URI → 사람이 읽을 수 있는 레이블."""
         meta = self._canonical.get(uri)
-        return meta["label"] if meta else uri.split(":")[-1]
+        return meta["label"] if meta else uri.rsplit(":", maxsplit=1)[-1]
 
     def all_uris(self) -> list[str]:
         return list(self._canonical.keys())

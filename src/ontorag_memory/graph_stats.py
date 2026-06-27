@@ -37,7 +37,7 @@ class GraphStats(BaseModel):
         triples:                시맨틱 트리플 총 수 (메타 제외).
         predicates:             사용된 고유 술어 수.
         hub_nodes:              연결 수 상위 노드 (in+out degree 기준).
-        isolated_nodes:         역방향 참조가 없는 노드 URI 목록.
+        source_nodes:         역방향 참조가 없는 노드 URI 목록.
         predicate_distribution: 술어별 사용 빈도 (상위 15개).
         avg_degree:             노드당 평균 연결 수.
     """
@@ -49,7 +49,7 @@ class GraphStats(BaseModel):
     triples: int
     predicates: int
     hub_nodes: list[HubNode] = []
-    isolated_nodes: list[str] = []
+    source_nodes: list[str] = []
     predicate_distribution: list[PredicateCount] = []
     avg_degree: float = 0.0
 
@@ -65,11 +65,11 @@ class GraphStats(BaseModel):
             lines.extend(
                 f"- {h.uri}  (degree {h.degree})" for h in self.hub_nodes
             )
-        if self.isolated_nodes:
-            lines.append(f"## 역방향 참조 없는 노드 ({len(self.isolated_nodes)}개)")
-            lines.extend(f"- {n}" for n in self.isolated_nodes[:20])
-            if len(self.isolated_nodes) > 20:
-                lines.append(f"  … 외 {len(self.isolated_nodes) - 20}개")
+        if self.source_nodes:
+            lines.append(f"## 역방향 참조 없는 노드 ({len(self.source_nodes)}개)")
+            lines.extend(f"- {n}" for n in self.source_nodes[:20])
+            if len(self.source_nodes) > 20:
+                lines.append(f"  … 외 {len(self.source_nodes) - 20}개")
         if self.predicate_distribution:
             lines.append("## 술어 사용 빈도 (상위)")
             lines.extend(

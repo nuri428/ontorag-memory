@@ -120,7 +120,7 @@ print(stats.subjects)    # 노드 수
 print(stats.triples)     # 트리플 수
 print(stats.avg_degree)  # 평균 연결 수
 print(stats.hub_nodes)   # [HubNode(uri=..., degree=N), ...]
-print(stats.isolated_nodes)          # 역방향 참조 없는 노드 목록
+print(stats.source_nodes)            # 소스 노드 목록 (진입 엣지 없음, out-degree > 0)
 print(stats.predicate_distribution)  # [PredicateCount(predicate=..., count=N)]
 print(stats.to_context_str())        # 마크다운 (LLM 주입용)
 ```

@@ -130,14 +130,14 @@ def test_graph_stats_to_context_str_empty_graph():
     assert "고립" not in ctx
 
 
-def test_graph_stats_isolated_nodes_truncated_at_20():
-    """역방향 참조 없는 노드 21개 → 20개만 출력, '… 외 1개' 메시지 추가."""
+def test_graph_stats_source_nodes_truncated_at_20():
+    """소스 노드(진입 엣지 없음) 21개 → 20개만 출력, '… 외 1개' 메시지 추가."""
     stats = GraphStats(
         graph="urn:test",
         subjects=21,
         triples=21,
         predicates=1,
-        isolated_nodes=[f"urn:ag:node:{i}" for i in range(21)],
+        source_nodes=[f"urn:ag:node:{i}" for i in range(21)],
     )
     ctx = stats.to_context_str()
     assert "… 외 1개" in ctx

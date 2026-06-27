@@ -96,7 +96,7 @@ class AgentIdentity:
     # ── 팩토리 ────────────────────────────────────────────────────────────────
 
     @classmethod
-    def auto_detect(cls, cwd: str | None = None) -> "AgentIdentity":
+    def auto_detect(cls, cwd: str | None = None) -> AgentIdentity:
         """현재 환경에서 자동 감지."""
         return cls(
             user=os.environ.get("ONTORAG_USER", _git_user_slug()),
@@ -104,7 +104,7 @@ class AgentIdentity:
         )
 
     @classmethod
-    def from_env(cls) -> "AgentIdentity":
+    def from_env(cls) -> AgentIdentity:
         """환경 변수로 명시적 설정.
 
         ONTORAG_USER, ONTORAG_WORKSPACE, ONTORAG_SESSION_ID

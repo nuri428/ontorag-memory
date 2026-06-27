@@ -254,15 +254,15 @@ def graph_stats(
                     table.add_row(pc.predicate, str(pc.count))
                 console.print(table)
 
-            if stats.isolated_nodes:
+            if stats.source_nodes:
                 console.print(
                     f"\n[yellow]역방향 참조 없는 노드[/yellow] "
-                    f"({len(stats.isolated_nodes)}개):"
+                    f"({len(stats.source_nodes)}개):"
                 )
-                for uri in stats.isolated_nodes[:10]:
+                for uri in stats.source_nodes[:10]:
                     console.print(f"  {uri}")
-                if len(stats.isolated_nodes) > 10:
-                    console.print(f"  … 외 {len(stats.isolated_nodes) - 10}개\n")
+                if len(stats.source_nodes) > 10:
+                    console.print(f"  … 외 {len(stats.source_nodes) - 10}개\n")
 
     _run(_inner())
 

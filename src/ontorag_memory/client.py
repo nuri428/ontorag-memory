@@ -175,6 +175,7 @@ class MemoryClient:
         if offset < 0:
             raise ValueError(f"offset은 0 이상이어야 합니다. 입력: {offset}")
         uri = self._resolve(entity)
+        _validate_uri(uri)
         graph = self.identity.graph_uri
         # OPTIONAL 서브쿼리로 MAX(assertedAt)만 취합 — 다중 assertedAt 트리플이
         # 쌓여도 행 곱셈이 발생하지 않음
@@ -503,6 +504,8 @@ SELECT ?dir ?s ?p ?o WHERE {{
         """
         from_uri = self._resolve(from_entity)
         to_uri   = self._resolve(to_entity)
+        _validate_uri(from_uri)
+        _validate_uri(to_uri)
         graph    = self.identity.graph_uri
 
         # BFS — 최대 3홉 SPARQL (깊이별 UNION)
@@ -611,6 +614,7 @@ SELECT DISTINCT ?node WHERE {{
             마크다운 형식 요약 문자열.
         """
         uri = self._resolve(entity)
+        _validate_uri(uri)
         why_result, recent = await asyncio.gather(
             self.why(uri),
             self.recall(uri, limit=10),
@@ -677,7 +681,7 @@ SELECT DISTINCT ?node WHERE {{
             hub_limit: 반환할 허브 노드 상위 N개 수.
 
         Returns:
-            GraphStats — hub_nodes, isolated_nodes, predicate_distribution 포함.
+            GraphStats — hub_nodes, source_nodes, predicate_distribution 포함.
         """
         graph = self.identity.graph_uri
         meta = "urn:ag:meta:"
@@ -757,7 +761,7 @@ SELECT ?p (COUNT(*) AS ?cnt) WHERE {{
             ]
         ]
 
-        isolated_nodes = [
+        source_nodes = [
             uri
             for uri, out in out_degree.items()
             if in_degree.get(uri, 0) == 0
@@ -776,7 +780,7 @@ SELECT ?p (COUNT(*) AS ?cnt) WHERE {{
             triples=triples,
             predicates=predicates,
             hub_nodes=hub_nodes,
-            isolated_nodes=isolated_nodes,
+            source_nodes=source_nodes,
             predicate_distribution=pred_dist,
             avg_degree=avg_degree,
         )

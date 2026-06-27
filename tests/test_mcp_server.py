@@ -39,6 +39,9 @@ def _make_mem(**overrides):
     mem.prune = AsyncMock(
         return_value={"subjects": 0, "triples": 0, "expired": 0, "dry_run": False}
     )
+    mem.find_path_transitive = AsyncMock(return_value=["urn:ag:proj:a", "urn:ag:proj:b"])
+    mem.summarize = AsyncMock(return_value="# Why: urn:ag:proj:test\n요약 내용")
+    mem.remember_bulk = AsyncMock(return_value=3)
     for k, v in overrides.items():
         setattr(mem, k, v)
     return mem
@@ -282,3 +285,66 @@ async def test_dispatch_unknown_tool_raises():
     mem = _make_mem()
     with pytest.raises(ValueError, match="Unknown tool"):
         await _dispatch(mem, "not_a_tool", {})
+
+
+# ── find_path_transitive / summarize / remember_bulk (P2) ────────────────────
+
+async def test_dispatch_find_path_transitive_defaults():
+    """entity, predicate 전달 — direction/limit 기본값."""
+    mem = _make_mem()
+    result = await _dispatch(mem, "find_path_transitive", {
+        "entity": "urn:ag:proj:patent-board",
+        "predicate": "urn:ag:rel:involves",
+    })
+    assert result == ["urn:ag:proj:a", "urn:ag:proj:b"]
+    mem.find_path_transitive.assert_awaited_once_with(
+        "urn:ag:proj:patent-board",
+        "urn:ag:rel:involves",
+        direction="out",
+        limit=100,
+    )
+
+
+async def test_dispatch_find_path_transitive_in_direction():
+    """direction='in', limit=50 전달."""
+    mem = _make_mem()
+    await _dispatch(mem, "find_path_transitive", {
+        "entity": "urn:ag:proj:patent-board",
+        "predicate": "urn:ag:rel:involves",
+        "direction": "in",
+        "limit": 50,
+    })
+    _, kwargs = mem.find_path_transitive.call_args
+    assert kwargs["direction"] == "in"
+    assert kwargs["limit"] == 50
+
+
+async def test_dispatch_summarize_returns_string():
+    """summarize 결과가 str."""
+    mem = _make_mem()
+    result = await _dispatch(mem, "summarize", {"entity": "urn:ag:proj:test"})
+    assert isinstance(result, str)
+    assert "# Why:" in result
+    mem.summarize.assert_awaited_once_with("urn:ag:proj:test")
+
+
+async def test_dispatch_remember_bulk_returns_count():
+    """remember_bulk 결과에 stored 키 포함."""
+    mem = _make_mem()
+    triples = [
+        {"subject": "urn:ag:proj:x", "predicate": "urn:ag:rel:label", "object": "X"},
+    ]
+    result = await _dispatch(mem, "remember_bulk", {"triples": triples})
+    assert result == {"stored": 3}
+    mem.remember_bulk.assert_awaited_once_with(triples, ttl_months=None)
+
+
+async def test_dispatch_remember_bulk_passes_ttl():
+    """ttl_months가 remember_bulk에 전달됨."""
+    mem = _make_mem()
+    triples = [
+        {"subject": "urn:ag:proj:x", "predicate": "urn:ag:rel:label", "object": "X"},
+    ]
+    await _dispatch(mem, "remember_bulk", {"triples": triples, "ttl_months": 6})
+    _, kwargs = mem.remember_bulk.call_args
+    assert kwargs["ttl_months"] == 6
