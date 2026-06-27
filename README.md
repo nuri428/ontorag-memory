@@ -15,14 +15,14 @@
 ontology-backed persistent memory for AI agents (Claude Code, Hermes, and any MCP-compatible agent).**
 
 ```
-Agent (Claude Code / Hermes / any MCP client)
+Agent (Claude Code / Hermes / any MCP-compatible client)
           │
-          │  MCP  (assert_triple / retract_triple / traverse_graph / find_path …)
+          │  MCP stdio  (ontorag-mcp — 15 tools)
           ▼
   ontorag-memory
   ├── EntityRegistry   free-text → canonical URI  (normalisation)
   ├── AgentIdentity    user + workspace + session  (isolation)
-  ├── MemoryClient     remember / recall / find_path  (high-level API)
+  ├── MemoryClient     remember / recall / find_path / summarize / …  (high-level API)
   └── MemoryLifecycle  prune / cleanup / dump  (lifecycle management)
           │
           │  ontorag[mcp]
@@ -41,11 +41,13 @@ Most agent frameworks store memory as plain-text files (`~/.hermes/`, Claude's
 |---|---|---|
 | Single-fact lookup | ✓ keyword search | ✓ SPARQL |
 | Date-scoped queries ("decisions on 2026-06-15") | ✗ unparsed text | ✓ structured predicate |
-| Multi-hop path discovery | ✗ impossible | ✓ `find_path` / `traverse_graph` |
-| Decision provenance ("why did we choose X?") | ✗ no structure | ✓ `rationale` triple |
+| Multi-hop path discovery | ✗ impossible | ✓ `find_path` / `find_path_transitive` |
+| Decision provenance ("why did we choose X?") | ✗ no structure | ✓ `why()` + `rationale` triple |
 | Token-efficient retrieval | ✗ reads whole files | ✓ returns only query results |
 | Per-agent isolation (multi-instance) | ✗ shared directory | ✓ named graph per user+workspace |
 | TTL / expiry | ✗ manual | ✓ `prune(older_than_months=6)` |
+| LLM context injection | ✗ paste raw text | ✓ `summarize()` → single markdown call |
+| Bulk write | ✗ loop + error-prone | ✓ `remember_bulk([...])` |
 
 The structural advantage appears on **multi-hop reasoning**, **provenance tracking**,
 and **cross-session continuity** — not simple lookups.
@@ -83,6 +85,35 @@ The setup command auto-detects your `git config user.email` and current
 working directory, then prints the exact snippet to add to your agent's
 MCP config.
 
+### MCP stdio server (`ontorag-mcp`)
+
+`ontorag-mcp` is the stdio entrypoint that exposes all 15 memory tools
+over the MCP protocol. Any MCP-compatible client can consume it.
+
+**Claude Desktop** — add to `~/.claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ontorag-memory": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/ontorag-memory", "run", "ontorag-mcp"],
+      "env": {
+        "FUSEKI_URL": "http://localhost:3030",
+        "ONTORAG_USER": "yourname",
+        "ONTORAG_WORKSPACE": "myproject"
+      }
+    }
+  }
+}
+```
+
+**Exposed tools (15):**
+`remember`, `recall`, `recall_recent`, `why`, `find_path`,
+`find_related`, `search_by_rationale`, `diary_write`, `diary_read`,
+`graph_stats`, `stats`, `prune`,
+`find_path_transitive`, `summarize`, `remember_bulk`
+
 ### Python API
 
 ```python
@@ -97,12 +128,35 @@ async with await MemoryClient.create() as mem:
         "Standardised interface supports both Claude Code and Hermes",
     )
 
+    # Bulk write — store multiple triples in one call
+    await mem.remember_bulk([
+        {"subject": "urn:ag:incident:2026-06-27:api-timeout",
+         "predicate": P.RATIONALE, "object": "Fuseki IPC JOIN missing index"},
+        {"subject": "urn:ag:incident:2026-06-27:api-timeout",
+         "predicate": P.INVOLVES, "object": "urn:ag:proj:patent-board",
+         "object_is_uri": True},
+    ])
+
     # Recall everything about an entity
     facts = await mem.recall("ontorag-flow")
 
-    # Multi-hop path discovery — impossible with flat files
+    # Multi-hop path discovery
     path = await mem.find_path("Hermes Agent", "patent_board")
     # → Hermes Agent --[relatedTo]--> SRE --[involves]--> patent_board
+
+    # Transitive closure — all nodes reachable via a predicate chain
+    incidents = await mem.find_path_transitive(
+        "urn:ag:proj:patent-board", P.INVOLVES, direction="in"
+    )
+    # → ["urn:ag:incident:2026-06-27:api-timeout", ...]
+
+    # Single-call LLM context injection (why + recent triples combined)
+    summary = await mem.summarize("urn:ag:proj:ontorag-memory")
+    # → "# Why: urn:ag:proj:ontorag-memory\n## 근거\n..."
+
+    # Graph health stats
+    stats = await mem.graph_stats()
+    print(stats.source_nodes)   # nodes with no incoming edges
 
     # Lifecycle
     await mem.prune(older_than_months=6, dry_run=True)
