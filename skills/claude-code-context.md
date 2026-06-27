@@ -239,6 +239,105 @@ ontorag-memory search "Fuseki"
 ontorag-memory search "온톨로지" --limit 10
 ```
 
+### find_path_transitive() — 전이적 순회 (P2)
+
+SPARQL property path `+`를 써서 술어를 따라 도달 가능한 모든 노드를 한 번에 조회.
+
+```python
+# patent-board가 involves로 연결된 모든 인시던트 URI
+all_incidents = await mem.find_path_transitive(
+    "urn:ag:proj:patent-board",
+    "urn:ag:rel:involves",
+    direction="in",   # "out" | "in" (both 불가)
+    limit=100,
+)
+# ["urn:ag:incident:2026-06-27:api-timeout", ...]
+
+# ontorag-memory가 의존하는 모든 기술 (전이적)
+deps = await mem.find_path_transitive(
+    "urn:ag:proj:ontorag-memory",
+    "urn:ag:rel:dependsOn",
+    direction="out",
+)
+```
+
+> `direction="both"`는 지원하지 않는다 — SPARQL property path `+`는 단방향이기 때문.
+
+### summarize() — 엔티티 요약 (P2)
+
+`why()` + `recall()` 을 병렬로 실행하고 마크다운 요약을 반환한다.
+LLM 컨텍스트 주입 시 두 번 호출하는 대신 단일 호출로 대체.
+
+```python
+summary = await mem.summarize("urn:ag:incident:2026-06-27:api-timeout")
+# 반환: str (마크다운)
+# # Why: urn:ag:incident:...
+# ## 근거
+# Fuseki 쿼리 타임아웃: IPC 분류 JOIN이 인덱스 없이 실행됨.
+#
+# ## 최근 트리플 (10개)
+# | urn:ag:rel:rationale | Fuseki 쿼리 타임아웃... |
+
+# LLM 컨텍스트에 주입
+system_prompt = f"...\n\n{await mem.summarize(entity_uri)}"
+```
+
+### remember_bulk() — 배치 저장 (P2)
+
+트리플 배열을 한 번에 저장. `record_incident()` 같이 여러 술어를 한꺼번에 기록할 때 사용.
+
+```python
+count = await mem.remember_bulk([
+    {
+        "subject": "urn:ag:incident:2026-06-27:api-timeout",
+        "predicate": "urn:ag:rel:rationale",
+        "object": "Fuseki 쿼리 타임아웃: IPC JOIN 인덱스 없음",
+    },
+    {
+        "subject": "urn:ag:incident:2026-06-27:api-timeout",
+        "predicate": "urn:ag:rel:involves",
+        "object": "urn:ag:proj:patent-board",
+        "object_is_uri": True,  # URI 객체면 True
+    },
+], ttl_months=24)   # 선택적 TTL
+# 반환: 저장된 트리플 수 (int)
+```
+
+`object_is_uri=True`는 객체가 리터럴이 아니라 URI일 때만 설정.
+생략하면 `False`(문자열 리터럴).
+
+---
+
+## MCP stdio 서버 (ontorag-mcp)
+
+위 Python API를 MCP 프로토콜로 노출. Claude Desktop, Hermes 에이전트 등이 소비.
+
+```bash
+# 실행 (pyproject.toml에 entrypoint 등록됨)
+ontorag-mcp
+
+# Claude Desktop ~/.claude/claude_desktop_config.json:
+{
+  "mcpServers": {
+    "ontorag-memory": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/ontorag-memory", "run", "ontorag-mcp"],
+      "env": {
+        "FUSEKI_URL": "http://localhost:3030",
+        "ONTORAG_USER": "greennuri",
+        "ONTORAG_WORKSPACE": "claudecode"
+      }
+    }
+  }
+}
+```
+
+노출되는 MCP 툴 (15개):
+`remember`, `recall`, `recall_recent`, `why`, `find_path`,
+`find_related`, `search_by_rationale`, `diary_write`, `diary_read`,
+`graph_stats`, `stats`, `prune`,
+`find_path_transitive`, `summarize`, `remember_bulk`
+
 ---
 
 ## CLI 명령 전체 목록
