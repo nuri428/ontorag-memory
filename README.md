@@ -114,6 +114,14 @@ over the MCP protocol. Any MCP-compatible client can consume it.
 `graph_stats`, `stats`, `prune`,
 `find_path_transitive`, `summarize`, `remember_bulk`
 
+**Error response format** — on tool failure the server returns a structured JSON object
+and logs the full exception server-side:
+```json
+{"error": "ValueError", "type": "tool_error"}
+```
+The `error` field contains the exception class name only — internal details (SPARQL
+fragments, file paths, Fuseki URL) stay in server logs.
+
 ### Python API
 
 ```python
@@ -240,6 +248,11 @@ ontorag-memory dump --session-only             # current session only
 | Agent | `urn:ag:agent:{slug}` | `urn:ag:agent:hermes` |
 | Decision | `urn:ag:decision:{date}:{slug}` | `urn:ag:decision:2026-06-15:mcp` |
 | Concept | `urn:ag:concept:{slug}` | `urn:ag:concept:acm` |
+| Diary | `urn:ag:diary:{date}:{time}:{session}:{slug}` | `urn:ag:diary:2026-06-27:143012:s0abc1234:today-standup` |
+
+> **Diary slug** — generated from the first 40 chars of content, lowercased, non-alphanumeric
+> characters replaced with `-`. Non-ASCII content (e.g., Korean-only entries) falls back to `entry`
+> to ensure RFC-compliant URIs.
 
 Standard predicates live in `ontorag_memory.registry.P`:
 `P.DEPENDS_ON`, `P.USES`, `P.INVOLVES`, `P.RATIONALE`, `P.MADE_AT`, …
@@ -269,6 +282,23 @@ Lifecycle meta-predicates are auto-attached by `MemoryClient.remember()`:
 
 ontorag-memory sits **above** ontorag (uses its MCP write tools) and is
 independent of ontorag-flow. It works with or without the Kinetic layer.
+
+---
+
+## Security
+
+All user-supplied strings that are interpolated into SPARQL queries go through
+`_validate_uri()` before use — this covers `recall()`, `find_path()`,
+`find_path_transitive()`, `find_related()`, `why()`, `summarize()`, and
+`check_duplicate()`. The validator rejects angle brackets, quotes, braces,
+and whitespace that could close a SPARQL URI literal and inject arbitrary syntax.
+
+Inputs are normalised through `EntityRegistry._resolve()` first (free-text → URI),
+then validated. Only URIs starting with a safe scheme (`urn:`, `http://`,
+`https://`) or registered short names pass through.
+
+MCP tool errors return the exception class name only — full details are logged
+server-side and never sent to the client.
 
 ---
 

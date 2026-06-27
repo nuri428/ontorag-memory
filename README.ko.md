@@ -111,6 +111,12 @@ MCP 호환 클라이언트라면 무엇이든 사용할 수 있습니다.
 `graph_stats`, `stats`, `prune`,
 `find_path_transitive`, `summarize`, `remember_bulk`
 
+**오류 응답 포맷** — 툴 실행 실패 시 구조화된 JSON 객체를 반환하고, 전체 예외는 서버 로그에만 기록합니다:
+```json
+{"error": "ValueError", "type": "tool_error"}
+```
+`error` 필드에는 예외 클래스 이름만 포함됩니다 — SPARQL 쿼리 단편, 내부 경로, Fuseki URL 등 내부 세부 정보는 서버 로그에 보관됩니다.
+
 ### Python API
 
 ```python
@@ -238,6 +244,10 @@ ontorag-memory dump --session-only              # 현재 세션만 내보내기
 | 에이전트 | `urn:ag:agent:{slug}` | `urn:ag:agent:hermes` |
 | 결정 | `urn:ag:decision:{date}:{slug}` | `urn:ag:decision:2026-06-15:mcp` |
 | 개념 | `urn:ag:concept:{slug}` | `urn:ag:concept:acm` |
+| 다이어리 | `urn:ag:diary:{date}:{time}:{session}:{slug}` | `urn:ag:diary:2026-06-27:143012:s0abc1234:today-standup` |
+
+> **다이어리 슬러그** — 내용 앞 40자를 소문자로 변환 후 영숫자(ASCII)만 허용, 나머지는 `-`로
+> 대체합니다. 한글 전용 내용 등 비ASCII 입력은 `entry`로 폴백하여 RFC 준수 URI를 보장합니다.
 
 표준 predicate는 `ontorag_memory.registry.P`에 상수로 정의:
 `P.DEPENDS_ON`, `P.USES`, `P.INVOLVES`, `P.RATIONALE`, `P.MADE_AT`, …
@@ -267,6 +277,16 @@ ontorag-memory dump --session-only              # 현재 세션만 내보내기
 
 ontorag-memory는 ontorag **위에** 위치하며(MCP write 툴 사용),
 ontorag-flow와는 독립적입니다. Kinetic 레이어 없이도 사용 가능합니다.
+
+---
+
+## 보안
+
+사용자가 제공한 문자열 중 SPARQL 쿼리에 보간되는 모든 값은 사용 전에 `_validate_uri()`를 거칩니다 — `recall()`, `find_path()`, `find_path_transitive()`, `find_related()`, `why()`, `summarize()`, `check_duplicate()`가 해당됩니다. 유효성 검사기는 SPARQL URI 리터럴을 종료하거나 임의의 구문을 주입할 수 있는 꺾쇠 괄호, 따옴표, 중괄호, 공백을 거부합니다.
+
+입력값은 먼저 `EntityRegistry._resolve()`(자유 텍스트 → URI)를 거쳐 정규화된 후 검증됩니다. 안전한 스킴(`urn:`, `http://`, `https://`)으로 시작하는 URI 또는 등록된 단축명만 통과됩니다.
+
+MCP 툴 오류는 예외 클래스 이름만 반환합니다 — 전체 세부 정보는 서버 측에 기록되며 클라이언트에게 전송되지 않습니다.
 
 ---
 
