@@ -11,6 +11,7 @@ import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from ontorag_memory.client import MemoryClient, _validate_uri
 from ontorag_memory.diary import DiaryEntry
@@ -18,7 +19,6 @@ from ontorag_memory.graph_stats import GraphStats, HubNode, PredicateCount
 from ontorag_memory.identity import AgentIdentity
 from ontorag_memory.registry import P
 from ontorag_memory.why_result import Influence, OutgoingEdge, WhyResult
-
 
 # ── 공통 픽스처 ────────────────────────────────────────────────────────────────
 
@@ -75,9 +75,9 @@ def test_why_result_to_context_str_empty_fields():
 
 
 def test_why_result_frozen():
-    """frozen=True — 인스턴스 필드 재할당 시 예외."""
+    """frozen=True — 인스턴스 필드 재할당 시 ValidationError."""
     result = WhyResult(uri="urn:ag:proj:x")
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         result.uri = "mutated"  # type: ignore[misc]
 
 
@@ -171,13 +171,13 @@ def test_diary_entry_to_context_str_with_tags():
 
 
 def test_diary_entry_frozen():
-    """DiaryEntry도 frozen=True."""
+    """DiaryEntry도 frozen=True — 필드 변경 시 ValidationError."""
     entry = DiaryEntry(
         uri="urn:ag:diary:2026-01-01:abc:test",
         content="내용",
         made_at="2026-01-01",
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         entry.content = "changed"  # type: ignore[misc]
 
 

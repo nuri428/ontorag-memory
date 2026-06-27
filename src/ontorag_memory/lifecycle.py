@@ -6,20 +6,23 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+import warnings
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
+
+import httpx
 
 from ontorag_memory.identity import AgentIdentity
 from ontorag_memory.registry import P
 
 
 def _now_iso() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _cutoff_iso(months: int) -> str:
-    dt = datetime.now(tz=timezone.utc) - timedelta(days=months * 30)
+    dt = datetime.now(tz=UTC) - timedelta(days=months * 30)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -50,7 +53,7 @@ class MemoryLifecycle:
             (subject, P.WORKSPACE, self._id.workspace, False),
         ]
         if ttl_months is not None:
-            dt = datetime.now(tz=timezone.utc) + timedelta(days=ttl_months * 30)
+            dt = datetime.now(tz=UTC) + timedelta(days=ttl_months * 30)
             triples.append((subject, P.EXPIRES_AT, dt.strftime("%Y-%m-%dT%H:%M:%SZ"), False))
         await self._store.assert_triples(triples, ontology=self._id.ontology_id)
 
@@ -71,7 +74,7 @@ class MemoryLifecycle:
                 enriched.append((s, P.IN_SESSION, self._id.session_uri, True))
                 enriched.append((s, P.WORKSPACE, self._id.workspace, False))
                 if ttl_months is not None:
-                    dt = datetime.now(tz=timezone.utc) + timedelta(days=ttl_months * 30)
+                    dt = datetime.now(tz=UTC) + timedelta(days=ttl_months * 30)
                     enriched.append((s, P.EXPIRES_AT, dt.strftime("%Y-%m-%dT%H:%M:%SZ"), False))
                 seen.add(s)
         await self._store.assert_triples(enriched, ontology=self._id.ontology_id)
@@ -263,15 +266,11 @@ WHERE {{
 
     # ── 내부 SPARQL 유틸 ──────────────────────────────────────────────────────
 
-    def _sparql_endpoint(self) -> tuple[str, "httpx.BasicAuth"]:
+    def _sparql_endpoint(self) -> tuple[str, httpx.BasicAuth]:
         """Fuseki SPARQL 엔드포인트 URL과 BasicAuth를 반환.
 
         환경 변수가 설정되지 않으면 기본값("admin"/"admin")을 사용하되 경고 발생.
         """
-        import warnings
-
-        import httpx
-
         user = os.environ.get("FUSEKI_USER", "")
         password = os.environ.get("FUSEKI_PASSWORD", "")
         if not user or not password:
@@ -290,8 +289,6 @@ WHERE {{
         return url, httpx.BasicAuth(user, password)
 
     async def _sparql_select(self, query: str) -> list[dict]:
-        import httpx
-
         url, auth = self._sparql_endpoint()
         async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
             resp = await client.post(
@@ -303,8 +300,6 @@ WHERE {{
             return resp.json()["results"]["bindings"]
 
     async def _sparql_ask(self, query: str) -> bool:
-        import httpx
-
         url, auth = self._sparql_endpoint()
         async with httpx.AsyncClient(auth=auth, timeout=15.0) as client:
             resp = await client.post(
@@ -316,8 +311,6 @@ WHERE {{
             return resp.json().get("boolean", False)
 
     async def _sparql_construct(self, query: str, fmt: str) -> str:
-        import httpx
-
         accept = {
             "turtle":   "text/turtle",
             "jsonld":   "application/ld+json",

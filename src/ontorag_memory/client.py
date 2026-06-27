@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import itertools
-import os
+import math
 import re
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ontorag_memory.diary import DiaryEntry
@@ -23,7 +24,6 @@ from ontorag_memory.identity import AgentIdentity
 from ontorag_memory.lifecycle import MemoryLifecycle
 from ontorag_memory.registry import EntityRegistry, P
 from ontorag_memory.why_result import Influence, OutgoingEdge, WhyResult
-
 
 _SAFE_URI_PREFIXES = ("urn:", "http://", "https://")
 # RFC 3986 이외 문자 + SPARQL 구조 탈출 가능 문자 차단
@@ -60,7 +60,7 @@ class MemoryClient:
         identity: AgentIdentity | None = None,
         registry: EntityRegistry | None = None,
         extra_registry: str | None = None,
-    ) -> "MemoryClient":
+    ) -> MemoryClient:
         """FusekiStore를 환경 변수에서 생성해 연결까지 수행.
 
         Args:
@@ -68,7 +68,7 @@ class MemoryClient:
             registry: 커스텀 EntityRegistry.
             extra_registry: 기본 레지스트리에 병합할 추가 YAML 경로.
         """
-        from ontorag.stores.fuseki import FusekiStore
+        from ontorag.stores.fuseki import FusekiStore  # noqa: PLC0415
 
         store = FusekiStore.from_env()
         reg = (
@@ -109,9 +109,13 @@ class MemoryClient:
         if object_is_uri is None:
             object_is_uri = self._is_uri_like(obj)
         o = self._resolve(obj) if object_is_uri else obj
-        if skip_if_exists and await self.check_duplicate(s, predicate, o, object_is_uri=object_is_uri):
+        if skip_if_exists and await self.check_duplicate(
+            s, predicate, o, object_is_uri=object_is_uri
+        ):
             return False
-        await self._lc.assert_memory(s, predicate, o, object_is_uri=object_is_uri, ttl_months=ttl_months)
+        await self._lc.assert_memory(
+            s, predicate, o, object_is_uri=object_is_uri, ttl_months=ttl_months
+        )
         return True
 
     async def remember_many(
@@ -160,9 +164,6 @@ class MemoryClient:
             [{"predicate": uri, "object": value, "object_is_uri": bool,
               "asserted_at": iso_str|None, "decay_score": float}]
         """
-        import math
-        from datetime import datetime, timezone
-
         uri = self._resolve(entity)
         graph = self.identity.graph_uri
         # OPTIONAL 서브쿼리로 MAX(assertedAt)만 취합 — 다중 assertedAt 트리플이
@@ -180,7 +181,7 @@ SELECT ?p ?o ?t WHERE {{
   FILTER(!STRSTARTS(STR(?p), "urn:ag:meta:"))
 }}"""
         rows = await self._lc._sparql_select(q)
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         results = []
         for row in rows:
             p_val = row["p"]["value"]
@@ -190,7 +191,7 @@ SELECT ?p ?o ?t WHERE {{
             if asserted_raw:
                 try:
                     asserted_dt = datetime.fromisoformat(asserted_raw.rstrip("Z")).replace(
-                        tzinfo=timezone.utc
+                        tzinfo=UTC
                     )
                     days = (now - asserted_dt).total_seconds() / 86400
                     decay_score = math.exp(-decay_lambda * days)
@@ -367,27 +368,10 @@ SELECT ?dir ?s ?p ?o WHERE {{
         graph    = self.identity.graph_uri
 
         # BFS — 최대 3홉 SPARQL (깊이별 UNION)
-        unions = []
-        for depth in range(1, max_depth + 1):
-            chain_s = " ".join(f"?n{i}" for i in range(depth - 1))
-            chain_p = " ".join(f"?p{i}" for i in range(depth))
-            if depth == 1:
-                pattern = f"<{from_uri}> ?p0 <{to_uri}> ."
-                select  = f"<{from_uri}> AS ?n0_s, ?p0, <{to_uri}> AS ?n0_e"
-            else:
-                nodes = [f"<{from_uri}>"] + [f"?mid{i}" for i in range(depth - 1)] + [f"<{to_uri}>"]
-                preds = [f"?rel{i}" for i in range(depth)]
-                pattern = " .\n    ".join(
-                    f"{nodes[i]} {preds[i]} {nodes[i+1]}" for i in range(depth)
-                ) + " ."
-                select = ", ".join(
-                    f"{nodes[i]} AS ?a{i}, {preds[i]} AS ?r{i}, {nodes[i+1]} AS ?b{i}"
-                    for i in range(depth)
-                )
-            unions.append((depth, pattern))
+        unions: list[int] = list(range(1, max_depth + 1))
 
         results: list[dict[str, str]] = []
-        for depth, pattern in unions:
+        for depth in unions:
             nodes = [f"<{from_uri}>"] + [f"?mid{i}" for i in range(depth - 1)] + [f"<{to_uri}>"]
             preds = [f"?rel{i}" for i in range(depth)]
             pattern_str = "\n    ".join(
@@ -556,9 +540,7 @@ SELECT ?p (COUNT(*) AS ?cnt) WHERE {{
         Returns:
             생성된 다이어리 항목 URI.
         """
-        from datetime import datetime, timezone
-
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H%M%S")
         slug = re.sub(r"[^a-z0-9가-힣]+", "-", content[:40].lower()).strip("-")
@@ -596,14 +578,12 @@ SELECT ?p (COUNT(*) AS ?cnt) WHERE {{
             raise ValueError(f"limit은 1 이상 1000 이하여야 합니다. 입력: {limit}")
         if since_days is not None and since_days < 0:
             raise ValueError(f"since_days는 0 이상이어야 합니다. 입력: {since_days}")
-        from datetime import datetime, timedelta, timezone
-
         graph = self.identity.graph_uri
         rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 
         date_filter = ""
         if since_days is not None:
-            cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=since_days)).strftime(
+            cutoff = (datetime.now(tz=UTC) - timedelta(days=since_days)).strftime(
                 "%Y-%m-%d"
             )
             date_filter = f'FILTER(?made_at >= "{cutoff}")'
@@ -678,7 +658,7 @@ SELECT ?entry ?tag WHERE {{
     async def aclose(self) -> None:
         await self._store.aclose()
 
-    async def __aenter__(self) -> "MemoryClient":
+    async def __aenter__(self) -> MemoryClient:
         return self
 
     async def __aexit__(self, *_: object) -> None:
