@@ -196,6 +196,49 @@ for r in results:
 triples = await mem.recall_recent(n=50)  # 기본 20, 최대 1000
 ```
 
+### recall() 페이지네이션 (P2)
+
+```python
+# 첫 페이지 (decay 정렬 후 상위 10개)
+page1 = await mem.recall("ontorag-memory", limit=10)
+
+# 두 번째 페이지
+page2 = await mem.recall("ontorag-memory", limit=10, offset=10)
+```
+
+### find_related() — 연결된 엔티티 탐색 (P2)
+
+```python
+# 특정 술어로 연결된 이웃 엔티티 (outgoing)
+results = await mem.find_related(
+    "urn:ag:proj:ontorag-memory",
+    "urn:ag:rel:dependsOn",
+    direction="out",   # "out" | "in" | "both"
+    limit=100,
+)
+# [{"uri": "urn:ag:proj:fuseki", "direction": "out"}, ...]
+```
+
+CLI:
+```bash
+ontorag-memory find-related urn:ag:proj:ontorag-memory urn:ag:rel:dependsOn
+ontorag-memory find-related urn:ag:proj:ontorag-memory urn:ag:rel:dependsOn --direction both
+```
+
+### search_by_rationale() — 전문 검색 (P2)
+
+```python
+# 근거/내용/레이블/설명에서 키워드 검색 (대소문자 무시)
+results = await mem.search_by_rationale("Fuseki", limit=20)
+# [{"subject": uri, "predicate": uri, "snippet": str}, ...]
+```
+
+CLI:
+```bash
+ontorag-memory search "Fuseki"
+ontorag-memory search "온톨로지" --limit 10
+```
+
 ---
 
 ## CLI 명령 전체 목록
@@ -212,6 +255,8 @@ ontorag-memory cleanup workspace --confirm
 ontorag-memory cleanup project <uri> --confirm
 ontorag-memory dump [--format turtle|jsonld|ntriples] [--output FILE]
 ontorag-memory setup [--agent hermes|claude-code]
+ontorag-memory find-related <entity> <predicate> [--direction out|in|both] [--limit N]
+ontorag-memory search <keyword> [--limit N]
 ```
 
 ---

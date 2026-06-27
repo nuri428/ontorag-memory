@@ -313,5 +313,61 @@ def diary_list(
     _run(_inner())
 
 
+# ── find-related ─────────────────────────────────────────────────────────────
+
+@app.command(name="find-related")
+def find_related(
+    entity: Annotated[str, typer.Argument(help="엔티티 이름 또는 URI.")],
+    predicate: Annotated[str, typer.Argument(help="술어 URI (P.xxx 상수 또는 전체 URI).")],
+    direction: Annotated[
+        str, typer.Option("--direction", "-d", help="탐색 방향: out | in | both.")
+    ] = "out",
+    limit: Annotated[
+        int, typer.Option("--limit", "-n", help="최대 결과 수.")
+    ] = 100,
+) -> None:
+    """특정 술어로 연결된 이웃 엔티티를 출력합니다."""
+
+    async def _inner() -> None:
+        async with await MemoryClient.create() as mem:
+            results = await mem.find_related(entity, predicate, direction=direction, limit=limit)
+            if not results:
+                console.print("\n[dim]연결된 엔티티가 없습니다.[/dim]\n")
+                return
+            console.print(f"\n[bold]find-related[/bold] {entity!r} —[{direction}]→ {predicate}\n")
+            for r in results:
+                arrow = "→" if r["direction"] == "out" else "←"
+                console.print(f"  {arrow} {r['uri']}")
+            console.print()
+
+    _run(_inner())
+
+
+# ── search ───────────────────────────────────────────────────────────────────
+
+@app.command()
+def search(
+    keyword: Annotated[str, typer.Argument(help="검색할 키워드.")],
+    limit: Annotated[
+        int, typer.Option("--limit", "-n", help="최대 결과 수.")
+    ] = 20,
+) -> None:
+    """근거/내용/레이블/설명에서 키워드로 전문 검색합니다."""
+
+    async def _inner() -> None:
+        async with await MemoryClient.create() as mem:
+            results = await mem.search_by_rationale(keyword, limit=limit)
+            if not results:
+                console.print(f"\n[dim]{keyword!r}에 해당하는 항목이 없습니다.[/dim]\n")
+                return
+            console.print(f"\n[bold]검색 결과[/bold] ({len(results)}개) — {keyword!r}\n")
+            for r in results:
+                console.print(f"  [cyan]{r['subject']}[/cyan]")
+                console.print(f"    [{r['predicate'].split(':')[-1]}] {r['snippet']}")
+            console.print()
+
+    _run(_inner())
+
+
 if __name__ == "__main__":
     app()

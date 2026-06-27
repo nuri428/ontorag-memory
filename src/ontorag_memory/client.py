@@ -149,21 +149,31 @@ class MemoryClient:
         *,
         sort_by_recency: bool = True,
         decay_lambda: float = 0.01,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """엔티티에 연결된 모든 트리플 반환 (메타 제외).
 
         assertedAt 기반 시간 감쇠 스코어를 계산해 최신 사실이 상위에 온다.
         decay_score = exp(-λ * days_since_assertion), λ 기본값 0.01 → 반감기 ~69일.
 
+        페이지네이션은 decay 정렬 이후 Python 슬라이싱으로 적용된다.
+
         Args:
             entity: 엔티티 이름 또는 URI.
             sort_by_recency: True이면 decay_score 내림차순 정렬.
             decay_lambda: 시간 감쇠 계수. 클수록 오래된 사실이 더 빨리 낮아짐.
+            limit: 반환할 최대 항목 수 (1–10000). None이면 전체.
+            offset: 결과 시작 위치 (0 이상).
 
         Returns:
             [{"predicate": uri, "object": value, "object_is_uri": bool,
               "asserted_at": iso_str|None, "decay_score": float}]
         """
+        if limit is not None and not 1 <= limit <= 10000:
+            raise ValueError(f"limit은 1 이상 10000 이하여야 합니다. 입력: {limit}")
+        if offset < 0:
+            raise ValueError(f"offset은 0 이상이어야 합니다. 입력: {offset}")
         uri = self._resolve(entity)
         graph = self.identity.graph_uri
         # OPTIONAL 서브쿼리로 MAX(assertedAt)만 취합 — 다중 assertedAt 트리플이
@@ -208,7 +218,8 @@ SELECT ?p ?o ?t WHERE {{
             })
         if sort_by_recency:
             results.sort(key=lambda r: r["decay_score"], reverse=True)
-        return results
+        end = offset + limit if limit is not None else None
+        return results[offset:end]
 
     async def check_duplicate(
         self,
@@ -273,6 +284,133 @@ SELECT ?s (MAX(?t) AS ?latest) WHERE {{
             {
                 "uri": row["s"]["value"],
                 "latest_asserted_at": row.get("latest", {}).get("value", ""),
+            }
+            for row in rows
+        ]
+
+    async def find_related(
+        self,
+        entity: str,
+        predicate: str,
+        *,
+        direction: str = "out",
+        limit: int = 100,
+    ) -> list[dict[str, str]]:
+        """특정 술어로 연결된 이웃 엔티티 탐색.
+
+        subject → object (out), object ← subject (in), 또는 양방향(both)으로
+        조회한다. why()가 "왜"를 묻는다면 find_related()는 "누가/무엇이
+        연결되어 있나"를 묻는다.
+
+        Args:
+            entity: 엔티티 이름 또는 URI.
+            predicate: 탐색할 술어 URI (P.xxx 상수 사용 권장).
+            direction: "out"(entity→?), "in"(?→entity), "both".
+            limit: 반환할 최대 결과 수 (1–10000).
+
+        Returns:
+            [{"uri": str, "direction": "out"|"in"}] — 중복 없음.
+
+        Raises:
+            ValueError: direction이 유효하지 않거나 limit 범위 초과 시.
+        """
+        if direction not in ("out", "in", "both"):
+            raise ValueError(
+                f"direction은 'out', 'in', 'both' 중 하나여야 합니다. 입력: {direction!r}"
+            )
+        if not 1 <= limit <= 10000:
+            raise ValueError(f"limit은 1 이상 10000 이하여야 합니다. 입력: {limit}")
+        uri = self._resolve(entity)
+        _validate_uri(uri)
+        _validate_uri(predicate)
+        graph = self.identity.graph_uri
+
+        if direction == "out":
+            body = f'<{uri}> <{predicate}> ?neighbor . BIND("out" AS ?dir)'
+        elif direction == "in":
+            body = f'?neighbor <{predicate}> <{uri}> . BIND("in" AS ?dir)'
+        else:
+            body = (
+                f'{{ <{uri}> <{predicate}> ?neighbor . BIND("out" AS ?dir) }}'
+                f"\n    UNION"
+                f'\n    {{ ?neighbor <{predicate}> <{uri}> . BIND("in" AS ?dir) }}'
+            )
+
+        q = f"""
+SELECT DISTINCT ?neighbor ?dir WHERE {{
+  GRAPH <{graph}> {{
+    {body}
+  }}
+}} LIMIT {limit}"""
+        rows = await self._lc._sparql_select(q)
+        return [
+            {
+                "uri": row["neighbor"]["value"],
+                "direction": row.get("dir", {}).get("value", direction),
+            }
+            for row in rows
+        ]
+
+    async def search_by_rationale(
+        self,
+        keyword: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, str]]:
+        """근거/내용/레이블/설명/태그 필드에서 키워드로 전문 검색.
+
+        의미 있는 텍스트 술어(rationale, content, label, description,
+        decidedAgainst, tag)에서만 검색해 날짜·URI 등 노이즈를 걸러낸다.
+        대소문자를 구분하지 않는다(LCASE 적용).
+
+        SPARQL 인젝션 방지: 키워드에서 \\ 와 " 를 이스케이프 처리.
+
+        Args:
+            keyword: 검색할 키워드 (최소 1자).
+            limit: 반환할 최대 결과 수 (1–1000).
+
+        Returns:
+            [{"subject": uri, "predicate": uri, "snippet": str}]
+            — 술어 기준 오름차순 정렬.
+
+        Raises:
+            ValueError: keyword가 비어 있거나 limit 범위 초과 시.
+        """
+        if not keyword.strip():
+            raise ValueError("키워드가 비어 있습니다.")
+        if not 1 <= limit <= 1000:
+            raise ValueError(f"limit은 1 이상 1000 이하여야 합니다. 입력: {limit}")
+
+        escaped = keyword.replace("\\", "\\\\").replace('"', '\\"')
+        graph = self.identity.graph_uri
+
+        text_predicates = " ".join(
+            f"<{p}>"
+            for p in (
+                P.RATIONALE,
+                P.CONTENT,
+                P.LABEL,
+                P.DESCRIPTION,
+                P.DECIDED_AGAINST,
+                P.REJECTED,
+                P.TAG,
+            )
+        )
+        q = f"""
+SELECT DISTINCT ?s ?p ?o WHERE {{
+  GRAPH <{graph}> {{
+    ?s ?p ?o .
+    FILTER(?p IN ({text_predicates}))
+    FILTER(isLiteral(?o))
+    FILTER(CONTAINS(LCASE(STR(?o)), LCASE("{escaped}")))
+  }}
+}} ORDER BY ?s ?p LIMIT {limit}"""
+        rows = await self._lc._sparql_select(q)
+        return [
+            {
+                "subject": row["s"]["value"],
+                "predicate": row["p"]["value"],
+                "snippet": row["o"]["value"],
             }
             for row in rows
         ]
