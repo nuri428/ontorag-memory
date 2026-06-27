@@ -808,7 +808,7 @@ SELECT ?p (COUNT(*) AS ?cnt) WHERE {{
         now = datetime.now(tz=UTC)
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H%M%S")
-        slug = re.sub(r"[^a-z0-9가-힣]+", "-", content[:40].lower()).strip("-")
+        slug = re.sub(r"[^a-z0-9]+", "-", content[:40].lower()).strip("-") or "entry"
         session_short = self.identity.session_id[:8]
         # 날짜 + 시각(초) + 세션 + slug → 같은 날 동일 내용 재작성 시 URI 충돌 방지
         entry_uri = f"urn:ag:diary:{date_str}:{time_str}:{session_short}:{slug}"

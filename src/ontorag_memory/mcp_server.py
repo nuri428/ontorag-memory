@@ -398,7 +398,13 @@ def build_server():
             ]
         except Exception as exc:
             logger.exception("ontorag-memory MCP tool %s failed", name)
-            detail: dict[str, Any] = {"error": str(exc), "type": exc.__class__.__name__}
+            # 전체 예외 메시지는 서버 로그에만 기록한다.
+            # 클라이언트에는 클래스명만 반환 — SPARQL 쿼리 단편, 내부 경로,
+            # Fuseki URL 등 내부 정보 노출을 방지한다.
+            detail: dict[str, Any] = {
+                "error": exc.__class__.__name__,
+                "type": "tool_error",
+            }
             return [
                 types.TextContent(
                     type="text",

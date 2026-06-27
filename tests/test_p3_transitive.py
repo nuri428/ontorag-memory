@@ -141,7 +141,7 @@ async def test_find_path_transitive_unsafe_predicate():
 
 
 async def test_find_path_transitive_resolves_entity_name():
-    """레지스트리 단축명이 URI로 변환됨."""
+    """_resolve() 결과가 SPARQL 쿼리에 삽입됨 (레지스트리 독립적)."""
     mem = _make_client()
     captured: list[str] = []
 
@@ -149,10 +149,14 @@ async def test_find_path_transitive_resolves_entity_name():
         captured.append(q)
         return []
 
-    with patch.object(mem._lc, "_sparql_select", new=capture):
-        await mem.find_path_transitive("patent board", P.DEPENDS_ON)
+    resolved_uri = "urn:ag:proj:stubbed-entity"
+    with (
+        patch.object(mem, "_resolve", return_value=resolved_uri),
+        patch.object(mem._lc, "_sparql_select", new=capture),
+    ):
+        await mem.find_path_transitive("any short name", P.DEPENDS_ON)
 
-    assert "urn:ag:proj:patent-board" in captured[0]
+    assert resolved_uri in captured[0]
 
 
 # ── summarize ─────────────────────────────────────────────────────────────────
